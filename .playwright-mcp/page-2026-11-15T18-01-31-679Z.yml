@@ -1,0 +1,108 @@
+- generic [ref=f10e3]:
+  - complementary "Application sidebar" [ref=f10e4]:
+    - generic [ref=f10e10]:
+      - generic [ref=f10e11]: Career Intelligence
+      - generic [ref=f10e12]: Research prototype
+    - navigation "Main navigation" [ref=f10e13]:
+      - button "New analysis" [ref=f10e14] [cursor=pointer]
+      - generic [ref=f10e18]:
+        - generic [ref=f10e19]: Workspace
+        - button "Home" [ref=f10e20] [cursor=pointer]
+        - button "User Profile" [disabled] [ref=f10e26]
+        - button "Career Recommendations" [disabled] [ref=f10e31]
+      - generic [ref=f10e37]:
+        - generic [ref=f10e38]: Analysis
+        - button "Skill Gap" [disabled] [ref=f10e39]
+        - button "Learning Roadmap" [disabled] [ref=f10e42]
+      - generic [ref=f10e46]:
+        - generic [ref=f10e47]: Transparency
+        - button "Analysis Details" [disabled] [ref=f10e48]
+    - generic [ref=f10e53]:
+      - generic [ref=f10e54]:
+        - generic [ref=f10e55]: "?"
+        - generic [ref=f10e56]:
+          - generic [ref=f10e57]: Active user
+          - generic [ref=f10e58]: Not selected
+      - paragraph [ref=f10e59]: Results live in browser memory only and reset on reload.
+  - main [ref=f10e61]:
+    - generic [ref=f10e63]:
+      - generic [ref=f10e64]: AI career guidance
+      - heading "Welcome to Career Intelligence" [level=2] [ref=f10e68]
+      - paragraph [ref=f10e69]: Discover your ideal IT career path with AI-powered analysis. Get personalized recommendations, identify skill gaps, and receive a tailored learning roadmap based on Indonesian occupational standards.
+      - generic [ref=f10e70]: Research prototype — results are held in browser memory only and are lost on reload
+    - generic [ref=f10e79]:
+      - generic [ref=f10e80]:
+        - heading "System status" [level=3] [ref=f10e81]
+        - paragraph [ref=f10e82]: Check backend connectivity
+      - button "Check backend" [ref=f10e85] [cursor=pointer]
+    - region "Step 1 · User setup" [ref=f10e88]:
+      - heading "Step 1 · User setup" [level=2] [ref=f10e90]
+      - generic [ref=f10e91]:
+        - generic [ref=f10e92]:
+          - generic [ref=f10e93]:
+            - heading "Create new account" [level=3] [ref=f10e94]
+            - paragraph [ref=f10e95]: Primary workflow
+          - generic [ref=f10e97]:
+            - generic [ref=f10e98]:
+              - text: Email address
+              - textbox "Email address" [ref=f10e99]:
+                - /placeholder: your.email@example.com
+            - generic [ref=f10e100]:
+              - text: Full name
+              - textbox "Full name" [ref=f10e101]:
+                - /placeholder: Enter your full name
+            - button "Create account" [disabled] [ref=f10e102]
+        - generic [ref=f10e103]:
+          - generic [ref=f10e104]:
+            - heading "Use existing account" [level=3] [ref=f10e105]
+            - paragraph [ref=f10e106]: Secondary workflow
+          - generic [ref=f10e108]:
+            - generic [ref=f10e109]:
+              - text: Email address
+              - textbox "Email address" [ref=f10e110]:
+                - /placeholder: your.email@example.com
+            - button "Continue with this account" [disabled] [ref=f10e111]
+            - generic [ref=f10e116]:
+              - strong [ref=f10e117]: "Active user:"
+              - text: None selected
+    - region "Step 2 · Run career analysis" [ref=f10e118]:
+      - heading "Step 2 · Run career analysis" [level=2] [ref=f10e120]
+      - generic [ref=f10e121]:
+        - generic [ref=f10e122]:
+          - heading "Analyze your profile" [level=3] [ref=f10e123]
+          - paragraph [ref=f10e124]: Please select or create a user first
+        - generic [ref=f10e126]:
+          - generic [ref=f10e127]:
+            - text: Target career (optional)
+            - combobox "Target career (optional) Leave blank to get automatic recommendations" [ref=f10e128]:
+              - option "Choose a target career (optional)" [selected]
+              - option "Backend Software Engineer"
+              - option "Frontend Software Engineer"
+              - option "Full-Stack Software Engineer"
+              - option "Data Analyst"
+              - option "Data Engineer"
+              - option "Data Scientist"
+              - option "Machine Learning Engineer"
+              - option "DevOps Engineer"
+              - option "Cybersecurity Engineer/Analyst"
+              - option "QA / Software Test Engineer"
+            - generic [ref=f10e129]: Leave blank to get automatic recommendations
+          - generic [ref=f10e130]:
+            - generic [ref=f10e131]:
+              - generic [ref=f10e132]: A
+              - generic [ref=f10e133]:
+                - heading "Analyze stored profile" [level=4] [ref=f10e134]
+                - paragraph [ref=f10e135]: Use previously stored profile data for analysis.
+            - button "Analyze stored profile" [disabled] [ref=f10e137]
+          - generic [ref=f10e141]:
+            - generic [ref=f10e142]:
+              - generic [ref=f10e143]: B
+              - generic [ref=f10e144]:
+                - heading "Upload CV" [level=4] [ref=f10e145]
+                - paragraph [ref=f10e146]: Upload your CV/resume for automatic profile extraction.
+            - generic [ref=f10e147]:
+              - generic [ref=f10e148]:
+                - text: CV file
+                - 'button "CV file Supported formats: PDF, DOCX" [ref=f10e149] [cursor=pointer]'
+                - generic [ref=f10e150]: "Supported formats: PDF, DOCX"
+              - button "Upload CV & analyze" [disabled] [ref=f10e152]

@@ -1,0 +1,199 @@
+import logging
+import json
+import re
+import traceback
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from starlette.concurrency import run_in_threadpool
+from sqlalchemy.exc import DBAPIError
+
+from app.api.dependencies import get_workflow
+from app.api.errors import ApiError
+from app.api.responses import finish
+from app.api.uploads import read_upload_bounded
+from app.core.config import ApiSettings, get_settings
+from app.schemas.api import AnalysisResponse, ErrorResponse, ExistingProfileRequest
+from app.services import analysis_log_service
+from app.services import retrieval_service as rs
+from app.services import user_service as us
+from app.services.cv_text_extraction_service import CVTextExtractionError, CVTextExtractor
+from app.services.pii_redaction_service import redact_pii
+
+from app.core.db import DatabaseConfigurationError
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+_ERRORS = {code: {"model": ErrorResponse} for code in (400, 404, 413, 415, 422, 500, 502, 503)}
+_EXTRACTION_STATUS = {
+    "unsupported_format": 415,
+    "file_too_large": 413,
+    "page_limit_exceeded": 413,
+    "document_expansion_limit_exceeded": 413,
+}
+
+
+def _precheck(user_id: int, target_career_id: str | None) -> str | None:
+    """Existing user + canonical career only. Nothing is created."""
+    if us.get_user_full_profile(user_id) is None:
+        raise ApiError(404, "user_not_found", "The requested user does not exist.")
+    target = (target_career_id or "").strip() or None
+    if target is not None and rs.get_career(target) is None:
+        raise ApiError(404, "career_not_found", "The requested career is not in the knowledge base.")
+    return target
+
+
+def _node_trace():
+    """Collect completed workflow nodes for the section-19 agent trace."""
+    nodes: list[str] = []
+
+    def observer(event: str, payload: dict) -> None:
+        if event != "node_update" or not isinstance(payload, dict):
+            return
+        node = payload.get("node")
+        if isinstance(node, str):
+            nodes.append(node)
+
+    return nodes, observer
+
+
+def _internal_error(exc: Exception) -> ApiError:
+    if isinstance(exc, DatabaseConfigurationError):
+        logger.error("Database is not configured.")
+        return ApiError(503, "database_not_configured", "The service database is not configured.")
+    frames = [
+        {
+            "file": frame.filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1],
+            "function": frame.name,
+            "line": frame.lineno,
+        }
+        for frame in traceback.extract_tb(exc.__traceback__)[-24:]
+    ]
+    diagnostic = {
+        "exception_class": type(exc).__name__,
+        "traceback_frames": frames,
+    }
+    if isinstance(exc, DBAPIError):
+        diagnostic.update(_safe_database_error_details(exc))
+        logger.error("Analysis database request failed; safe_diagnostics=%s", json.dumps(diagnostic))
+    else:
+        logger.error("Analysis request failed; safe_diagnostics=%s", json.dumps(diagnostic))
+    return ApiError(500, "internal_error", "An internal error occurred.")
+
+
+def _safe_database_error_details(exc: DBAPIError) -> dict[str, str | None]:
+    """Return only non-sensitive DBAPI diagnostics; never log SQL or bound values."""
+    original = getattr(exc, "orig", None)
+    diag = getattr(original, "diag", None)
+    sqlstate = (
+        getattr(original, "sqlstate", None)
+        or getattr(original, "pgcode", None)
+        or getattr(diag, "sqlstate", None)
+    )
+    if not isinstance(sqlstate, str) or re.fullmatch(r"[0-9A-Z]{5}", sqlstate) is None:
+        sqlstate = None
+
+    primary = getattr(diag, "message_primary", None)
+    if not isinstance(primary, str):
+        return {"sqlstate": sqlstate, "database_error": "Database driver details withheld."}
+    message = " ".join(primary.split())
+    patterns = (
+        (r'(?:relation|table) ["\']?([A-Za-z_][A-Za-z0-9_$.]*)["\']? does not exist',
+         "referenced relation is missing: {}"),
+        (r'column ["\']?([A-Za-z_][A-Za-z0-9_$.]*)["\']? does not exist',
+         "referenced column is missing: {}"),
+        (r'null value in column ["\']?([A-Za-z_][A-Za-z0-9_$.]*)["\']? violates not-null constraint',
+         "not-null constraint violation on column: {}"),
+        (r'(?:duplicate key value violates unique constraint|violates foreign key constraint) ["\']?([A-Za-z_][A-Za-z0-9_$.]*)["\']?',
+         "constraint violation: {}"),
+        (r'invalid input syntax for type ([A-Za-z_][A-Za-z0-9_ ]*)',
+         "invalid value for database type: {}"),
+    )
+    for pattern, template in patterns:
+        match = re.fullmatch(pattern, message, flags=re.IGNORECASE)
+        if match:
+            detail = template.format(match.group(1).strip())
+            return {"sqlstate": sqlstate, "database_error": detail}
+    if re.match(r"syntax error at or near\b", message, flags=re.IGNORECASE):
+        return {"sqlstate": sqlstate, "database_error": "PostgreSQL syntax error; token withheld."}
+    return {"sqlstate": sqlstate, "database_error": "PostgreSQL reported an error; message withheld."}
+
+
+@router.post("/cv", response_model=AnalysisResponse, responses=_ERRORS)
+async def analyze_cv(
+    user_id: Annotated[int, Form(gt=0)],
+    file: Annotated[UploadFile, File()],
+    target_career_id: Annotated[str | None, Form(max_length=64)] = None,
+    settings: ApiSettings = Depends(get_settings),
+    workflow=Depends(get_workflow),
+) -> AnalysisResponse:
+    content = b""
+    try:
+        target = await run_in_threadpool(_precheck, user_id, target_career_id)
+        if workflow.profile_agent is None:
+            raise ApiError(503, "llm_unavailable", "CV analysis is unavailable: no LLM client is configured.")
+
+        content = await read_upload_bounded(file, settings.max_upload_bytes, settings.upload_chunk_bytes)
+        extractor = CVTextExtractor(
+            max_file_size_bytes=settings.max_upload_bytes, max_pdf_pages=settings.max_pdf_pages,
+        )
+        try:
+            extraction = await run_in_threadpool(extractor.extract, content, file.filename or "")
+        except CVTextExtractionError as exc:
+            # Messages are sanitized by the service (no content, no filename).
+            raise ApiError(_EXTRACTION_STATUS.get(exc.code, 422), exc.code, str(exc)) from None
+        finally:
+            content = b""
+
+        redaction = redact_pii(extraction.extracted_text)
+        metadata = extraction.metadata
+        extraction = None  # drop the raw text reference
+
+        nodes_executed, observer = _node_trace()
+        state = await run_in_threadpool(
+            lambda: workflow.run(
+                user_id=user_id, target_career_id=target,
+                raw_profile_text=redaction.redacted_text, observer=observer,
+            )
+        )
+        # Best-effort audit log: it never changes the analysis response.
+        analysis_log_service.record_analysis(
+            state=state, workflow=workflow, user_id=user_id, source="cv_upload",
+            target_career_id=target, nodes_executed=nodes_executed,
+            document=metadata, redaction=redaction,
+        )
+        return finish(state, user_id=user_id, source="cv_upload",
+                      document=metadata, redaction=redaction)
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise _internal_error(exc) from None
+    finally:
+        content = b""
+        await file.close()
+
+
+@router.post("/profile", response_model=AnalysisResponse, responses=_ERRORS)
+def analyze_existing_profile(
+    body: ExistingProfileRequest,
+    workflow=Depends(get_workflow),
+) -> AnalysisResponse:
+    """Runs the workflow over an already-persisted profile; no profile parsing."""
+    try:
+        target = _precheck(body.user_id, body.target_career_id)
+        nodes_executed, observer = _node_trace()
+        state = workflow.run(
+            user_id=body.user_id, target_career_id=target, observer=observer,
+        )
+        # Best-effort audit log: it never changes the analysis response.
+        analysis_log_service.record_analysis(
+            state=state, workflow=workflow, user_id=body.user_id,
+            source="existing_profile", target_career_id=target,
+            nodes_executed=nodes_executed,
+        )
+        return finish(state, user_id=body.user_id, source="existing_profile")
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise _internal_error(exc) from None
